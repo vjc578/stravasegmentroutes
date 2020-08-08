@@ -6,8 +6,10 @@ import pprint
 import subprocess
 import json
 import math
+from os import path
 
 import googlemaps
+import segmentdownloader
 
 def write_gpx(latlons, filename):
     with open(filename, 'w') as file:
@@ -25,8 +27,12 @@ def write_gpx(latlons, filename):
         file.write('\n')
         file.write('</gpx>')
 
-def get_segment_latlngs(segment_id):
-  with open("segment_information/{}.json".format(segment_id), "r") as file:
+def get_segment_latlngs(strava_access_token, segment_id):
+  filename = "segment_information/{}.json".format(segment_id)
+  if not path.exists(filename):
+      segmentdownloader.download_segment_latlngs(strava_access_token, segment_id)
+
+  with open(filename, "r") as file:
     segment_json = json.loads(file.read())
     segment_polyline = segment_json["map"]["polyline"]
     segment_latlngs = googlemaps.convert.decode_polyline(segment_polyline)
@@ -103,10 +109,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Determines a route from a selection of Strava segments"
     )
+
     parser.add_argument("--maps_api_key", type=str, required=True)
     parser.add_argument("--segments", type=str, required=True)
     parser.add_argument("--output_file", type=str, required=True)
     parser.add_argument("--start_lat_lng", type=str, required=True)
+    parser.add_argument("--strava_access_token", type=str, required=True)
+
     args = parser.parse_args()
     segments = args.segments.split(',')
     (start_lat, start_lng) = args.start_lat_lng.split(',')
@@ -114,8 +123,9 @@ def main():
 
     gmaps = googlemaps.Client(key=args.maps_api_key)
 
-    segment_latlngs = [get_segment_latlngs(s) for s in segments]
+    segment_latlngs = [get_segment_latlngs(args.strava_access_token, s) for s in segments]
     segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs)
+
     make_gpx(gmaps, start_latlng, segment_latlngs_ordered, args.output_file)
 
 if __name__ == "__main__":

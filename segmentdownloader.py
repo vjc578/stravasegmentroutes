@@ -3,7 +3,7 @@
 import argparse
 import subprocess
 
-def query_segment_latlngs(access_token, segment_id):
+def download_segment_latlngs(access_token, segment_id):
   completed = subprocess.run(["curl", "-G", "https://www.strava.com/api/v3/segments/{}".format(segment_id), "-H", "Authorization: Bearer {}".format(access_token)], capture_output=True)
   segment_json = completed.stdout.decode("utf-8")
   with open("segment_information/{}.json".format(segment_id), 'w') as file:
@@ -20,7 +20,7 @@ def main():
     segments = args.segments.split(',')
 
     for segment in segments:
-        query_segment_latlngs(args.strava_access_token, segment)
+        download_segment_latlngs(args.strava_access_token, segment)
 
 
 if __name__ == "__main__":
