@@ -43,7 +43,7 @@ def get_directions(gmaps, start_latlng, end_latlng):
     polyline = directions_result[0]["overview_polyline"]["points"]
     return googlemaps.convert.decode_polyline(polyline)
 
-def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments):
+def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments, indices):
     # This uses the nearest neighbor greedy algorithm for determining
     # the segment ordering. It starts with the origin, then finds the next
     # closest segment, and then the next closest, etc ... This is not optimal.
@@ -52,7 +52,10 @@ def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments):
     # You are riding your bike, does it really have to be the absolute shortest path?
     #
     # Actually it's worse, because the distance metrix between two points is
-    # the "as the crow flies" distance. We could use the google maps distance matrix
+    # the "as the crow flies" distance. Well actually its technically even worse, since
+    # we don't take into account the curvature of the Earth. If you are doing routes
+    # where that matters, more power to you, but this will be (more) inaccurate.
+    # To solve some of these problems we could use the google maps distance matrix
     # api instead, which would be more realistic. However if we do this
     # naively we have to query n^2 number of pairs, where n is the number
     # of segments. Since the google maps distance matrix API only allows up
@@ -89,8 +92,9 @@ def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments):
         result = result + [closest_next_segment]
         origin = closest_next_segment[len(closest_next_segment) - 1]
         remaining.remove(closest_index)
+        indices.append(closest_index)
 
-        if max_segments != -1 and len(segment_latlngs) - len(remaining) > max_segments:
+        if max_segments != -1 and len(segment_latlngs) - len(remaining) >= max_segments:
             break
 
     return result
@@ -127,10 +131,12 @@ def main():
 
     gmaps = googlemaps.Client(key=args.maps_api_key)
 
+    indices = []
     segment_latlngs = [get_segment_latlngs(args.strava_access_token, s) for s in segments]
-    segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs, args.max_segments)
+    segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs, args.max_segments, indices)
 
     make_gpx(gmaps, start_latlng, segment_latlngs_ordered, args.output_file)
+    print([segments[i] for i in indices])
 
 if __name__ == "__main__":
     main()
