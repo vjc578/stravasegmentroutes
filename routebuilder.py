@@ -43,7 +43,7 @@ def get_directions(gmaps, start_latlng, end_latlng):
     polyline = directions_result[0]["overview_polyline"]["points"]
     return googlemaps.convert.decode_polyline(polyline)
 
-def get_segment_ordering(gmaps, start_latlng, segment_latlngs):
+def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments):
     # This uses the nearest neighbor greedy algorithm for determining
     # the segment ordering. It starts with the origin, then finds the next
     # closest segment, and then the next closest, etc ... This is not optimal.
@@ -90,6 +90,9 @@ def get_segment_ordering(gmaps, start_latlng, segment_latlngs):
         origin = closest_next_segment[len(closest_next_segment) - 1]
         remaining.remove(closest_index)
 
+        if max_segments != -1 and len(segment_latlngs) - len(remaining) > max_segments:
+            break
+
     return result
 
 def make_gpx(gmaps, start_latlng, segment_latlngs, output_file_name):
@@ -115,6 +118,7 @@ def main():
     parser.add_argument("--output_file", type=str, required=True)
     parser.add_argument("--start_lat_lng", type=str, required=True)
     parser.add_argument("--strava_access_token", type=str, required=True)
+    parser.add_argument("--max_segments", type=int, required=False, default=-1)
 
     args = parser.parse_args()
     segments = args.segments.split(',')
@@ -124,7 +128,7 @@ def main():
     gmaps = googlemaps.Client(key=args.maps_api_key)
 
     segment_latlngs = [get_segment_latlngs(args.strava_access_token, s) for s in segments]
-    segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs)
+    segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs, args.max_segments)
 
     make_gpx(gmaps, start_latlng, segment_latlngs_ordered, args.output_file)
 
