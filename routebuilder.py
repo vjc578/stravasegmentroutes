@@ -6,10 +6,12 @@ import pprint
 import subprocess
 import json
 import math
+
 from os import path
 
 import googlemaps
 import segmentdownloader
+import heldkarp
 
 def write_gpx(latlons, filename):
     with open(filename, 'w') as file:
@@ -27,7 +29,7 @@ def write_gpx(latlons, filename):
         file.write('\n')
         file.write('</gpx>')
 
-def get_segment_latlngs(strava_access_token, segment_id):
+def get_segment_information(strava_access_token, segment_id):
   filename = "segment_information/{}.json".format(segment_id)
   if not path.exists(filename):
       segmentdownloader.download_segment_latlngs(strava_access_token, segment_id)
@@ -35,15 +37,72 @@ def get_segment_latlngs(strava_access_token, segment_id):
   with open(filename, "r") as file:
     segment_json = json.loads(file.read())
     segment_polyline = segment_json["map"]["polyline"]
+    segment_length = segment_json["distance"]
     segment_latlngs = googlemaps.convert.decode_polyline(segment_polyline)
-    return segment_latlngs
+    return {"length": segment_length, "latlngs" : segment_latlngs}
 
 def get_directions(gmaps, start_latlng, end_latlng):
     directions_result = gmaps.directions(start_latlng, end_latlng, mode="bicycling")
     polyline = directions_result[0]["overview_polyline"]["points"]
     return googlemaps.convert.decode_polyline(polyline)
 
-def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments, indices):
+def get_segment_ordering_heldkarp(gmaps, start_latlng, segment_information, indices):
+    # 2N segments. Need to include from start of a segment to end of a segment, but
+    # there is only one path there.
+    start_and_segment_information = [{'length': 1, 'latlngs': [start_latlng, start_latlng]}] + segment_information
+    number_of_points = 2 + 2 * len(segment_information)
+    distances = [[0] * number_of_points for i in range(number_of_points)]
+    for i in range(len(start_and_segment_information)):
+        actual_i = 2 * i
+        # Segment distance
+        distances[actual_i][actual_i + 1] = start_and_segment_information[i]["length"]
+
+        # Cannot go from end to start of same segment
+        distances[actual_i + 1][actual_i] = sys.maxsize
+
+        origin_latlngs = start_and_segment_information[i]["latlngs"]
+
+        # Start at the end
+        origin = origin_latlngs[len(origin_latlngs) - 1]
+
+        # Compute distance of end of this segment to start of all the other ones.
+        destination_segment_information = start_and_segment_information[:i] + start_and_segment_information[i+1:]
+        destinations = [x["latlngs"][0] for x in destination_segment_information]
+        matrix = gmaps.distance_matrix([origin], destinations, mode="bicycling", units="metric")
+        distance_destinations = matrix["rows"][0]['elements']
+
+        for j in range(len(start_and_segment_information)):
+            if i == j: continue
+            elif j > i: destination_index = j-1
+            else: destination_index = j
+
+            actual_j = 2 * j
+
+            # Can never go from start to start of next value
+            distances[actual_i][actual_j] = sys.maxsize
+
+            # Go from end to start of next value.
+            distance_destination = distance_destinations[destination_index]["distance"]["value"]
+            distances[actual_i+1][actual_j] = distance_destination
+
+            # Can never go from start to end of next value
+            distances[actual_i][actual_j + 1] = sys.maxsize
+
+            # Can never go from end of this one to end of the next one
+            distances[actual_i + 1][actual_j + 1] = sys.maxsize
+
+    print("Completed constructing distance matrix")
+    path = heldkarp.held_karp(distances)
+    result = []
+    for i in path:
+        if i == 0 or i == 1 or i % 2 == 1: continue
+        else:
+            index = int(i/2) - 1
+            indices.append(index)
+            result.append(segment_information[index]["latlngs"])
+    return result
+
+def get_segment_ordering_greedy(gmaps, start_latlng, segment_latlngs, max_segments, indices):
     # This uses the nearest neighbor greedy algorithm for determining
     # the segment ordering. It starts with the origin, then finds the next
     # closest segment, and then the next closest, etc ... This is not optimal.
@@ -85,7 +144,15 @@ def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments, ind
 
         # Sort by distance.
         distances.sort(key=(lambda a : a[1]))
-        closest_index = distances[0][0]
+
+        # Get the actual distances for the then closest.
+        top_ten_destinations = [segment_latlngs[i][0] for (i, _) in distances[:10]]
+        matrix = gmaps.distance_matrix([origin], top_ten_destinations, mode="bicycling")
+        distance_destinations = matrix["rows"][0]['elements']
+        indices_sorted = sorted(range(len(distance_destinations)),
+                                 key=lambda k: distance_destinations[k]["distance"]["value"])
+
+        closest_index = distances[indices_sorted[0]][0]
         closest_next_segment = segment_latlngs[closest_index]
 
         # Take the closest as the next value, and its end point as the next start.
@@ -99,8 +166,10 @@ def get_segment_ordering(gmaps, start_latlng, segment_latlngs, max_segments, ind
 
     return result
 
-def make_gpx(gmaps, start_latlng, segment_latlngs, output_file_name):
+def make_gpx(gmaps, start_latlng, next_latlng, segment_latlngs, output_file_name):
     latlngs = [start_latlng]
+    if (next_latlng is not None):
+        latlngs = latlngs + get_directions(gmaps, start_latlng, next_latlng)
     for segment_latlng in segment_latlngs:
         # Go from previous point to start of segment
         latlngs = latlngs + get_directions(gmaps, latlngs[len(latlngs) -1], segment_latlng[0])
@@ -123,19 +192,34 @@ def main():
     parser.add_argument("--start_lat_lng", type=str, required=True)
     parser.add_argument("--strava_access_token", type=str, required=True)
     parser.add_argument("--max_segments", type=int, required=False, default=-1)
+    parser.add_argument("--next_point", type=str, required=False, default=None)
+    parser.add_argument("--heldkarp", type=bool, required=False, default=False)
 
     args = parser.parse_args()
     segments = args.segments.split(',')
     (start_lat, start_lng) = args.start_lat_lng.split(',')
     start_latlng = start_latlng = {"lat": start_lat, "lng": start_lng}
 
+    if args.next_point is not None:
+        (next_lat, next_lng) = args.next_point.split(',')
+        next_latlng = {"lat": next_lat, "lng": next_lng}
+    else: next_latlng = None
+
     gmaps = googlemaps.Client(key=args.maps_api_key)
 
     indices = []
-    segment_latlngs = [get_segment_latlngs(args.strava_access_token, s) for s in segments]
-    segment_latlngs_ordered = get_segment_ordering(gmaps, start_latlng, segment_latlngs, args.max_segments, indices)
+    segment_information = [get_segment_information(args.strava_access_token, s) for s in segments]
 
-    make_gpx(gmaps, start_latlng, segment_latlngs_ordered, args.output_file)
+    # This is sadly so slow as to never really be useful :(
+    if not args.heldkarp:
+        segment_latlngs_ordered = get_segment_ordering_greedy(
+            gmaps, next_latlng if next_latlng is not None else start_latlng,
+            [x["latlngs"] for x in segment_information], args.max_segments, indices)
+    else:
+        segment_latlngs_ordered = get_segment_ordering_heldkarp(
+            gmaps, next_latlng if next_latlng is not None else start_latlng, segment_information, indices)
+
+    make_gpx(gmaps, start_latlng, next_latlng, segment_latlngs_ordered, args.output_file)
     print([segments[i] for i in indices])
 
 if __name__ == "__main__":
