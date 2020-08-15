@@ -32,16 +32,16 @@ def held_karp(dists):
             for bit in subset:
                 bits |= 1 << bit
 
-            # Find the lowest cost to get to this subset
-            #for k in subset:
-            #    prev = bits & ~(1 << k)
+            #Find the lowest cost to get to this subset
+            for k in subset:
+                prev = bits & ~(1 << k)
 
-            #    res = []
-            #    for m in subset:
-            #        if m == 0 or m == k:
-            #            continue
-            #        res.append((C[(prev, m)][0] + dists[m][k], m))
-            #    C[(bits, k)] = min(res)
+                res = []
+                for m in subset:
+                    if m == 0 or m == k:
+                        continue
+                    res.append((C[(prev, m)][0] + dists[m][k], m))
+                C[(bits, k)] = min(res)
         print(subset_size)
 
     # We're interested in all bits but the least significant (the start state)

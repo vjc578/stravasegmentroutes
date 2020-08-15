@@ -50,16 +50,10 @@ def get_segment_ordering_heldkarp(gmaps, start_latlng, segment_information, indi
     # 2N segments. Need to include from start of a segment to end of a segment, but
     # there is only one path there.
     start_and_segment_information = [{'length': 1, 'latlngs': [start_latlng, start_latlng]}] + segment_information
-    number_of_points = 2 + 2 * len(segment_information)
+    number_of_points = 1 + len(segment_information)
     distances = [[0] * number_of_points for i in range(number_of_points)]
+    segment_distances = []
     for i in range(len(start_and_segment_information)):
-        actual_i = 2 * i
-        # Segment distance
-        distances[actual_i][actual_i + 1] = start_and_segment_information[i]["length"]
-
-        # Cannot go from end to start of same segment
-        distances[actual_i + 1][actual_i] = sys.maxsize
-
         origin_latlngs = start_and_segment_information[i]["latlngs"]
 
         # Start at the end
@@ -76,30 +70,18 @@ def get_segment_ordering_heldkarp(gmaps, start_latlng, segment_information, indi
             elif j > i: destination_index = j-1
             else: destination_index = j
 
-            actual_j = 2 * j
-
-            # Can never go from start to start of next value
-            distances[actual_i][actual_j] = sys.maxsize
-
             # Go from end to start of next value.
             distance_destination = distance_destinations[destination_index]["distance"]["value"]
-            distances[actual_i+1][actual_j] = distance_destination
-
-            # Can never go from start to end of next value
-            distances[actual_i][actual_j + 1] = sys.maxsize
-
-            # Can never go from end of this one to end of the next one
-            distances[actual_i + 1][actual_j + 1] = sys.maxsize
+            distances[i][j] = distance_destination + start_and_segment_information[j]["length"]
 
     print("Completed constructing distance matrix")
     path = heldkarp.held_karp(distances)
     result = []
     for i in path:
-        if i == 0 or i == 1 or i % 2 == 1: continue
+        if i == 0: continue
         else:
-            index = int(i/2) - 1
-            indices.append(index)
-            result.append(segment_information[index]["latlngs"])
+            indices.append(i-1)
+            result.append(segment_information[i-1]["latlngs"])
     return result
 
 def get_segment_ordering_greedy(gmaps, start_latlng, segment_latlngs, max_segments, indices):
